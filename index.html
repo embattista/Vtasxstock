@@ -258,6 +258,16 @@
     <button class="fbtn" onclick="setMarca('Akiabara',this)">Akiabara</button>
     <button class="fbtn" onclick="setMarca('Burgues',this)">Burgues</button>
   </div>
+  <div class="filter-row" id="local-tabs-reorder">
+    <span style="font-size:10.5px;font-weight:600;color:var(--muted);align-self:center;margin-right:4px">Local:</span>
+    <button class="fbtn active" onclick="setLocalReorder('TODOS',this)">Todos</button>
+    <button class="fbtn" onclick="setLocalReorder('AKRI',this)" style="border-color:var(--akri)">AKRI</button>
+    <button class="fbtn" onclick="setLocalReorder('BUCO',this)" style="border-color:var(--buco)">BUCO</button>
+    <button class="fbtn" onclick="setLocalReorder('LAAL',this)" style="border-color:var(--laal)">LAAL</button>
+    <button class="fbtn" onclick="setLocalReorder('LACO',this)" style="border-color:var(--laco)">LACO</button>
+    <button class="fbtn" onclick="setLocalReorder('LADI',this)" style="border-color:var(--ladi)">LADI</button>
+    <button class="fbtn" onclick="setLocalReorder('LAJO',this)" style="border-color:var(--lajo)">LAJO</button>
+  </div>
   <div class="card">
     <div class="card-title" id="reorder-title">Top 30 a reordenar · Lacoste <span class="tag">stock &lt; 3 meses, ventas año anterior</span></div>
     <div class="sx">
@@ -275,6 +285,16 @@
 
 <!-- ===================== ROTAR ===================== -->
 <section class="section" id="sec-rotar">
+  <div class="filter-row" id="local-tabs-rotar">
+    <span style="font-size:10.5px;font-weight:600;color:var(--muted);align-self:center;margin-right:4px">Local:</span>
+    <button class="fbtn active" onclick="setLocalRotar('TODOS',this)">Todos</button>
+    <button class="fbtn" onclick="setLocalRotar('AKRI',this)" style="border-color:var(--akri)">AKRI</button>
+    <button class="fbtn" onclick="setLocalRotar('BUCO',this)" style="border-color:var(--buco)">BUCO</button>
+    <button class="fbtn" onclick="setLocalRotar('LAAL',this)" style="border-color:var(--laal)">LAAL</button>
+    <button class="fbtn" onclick="setLocalRotar('LACO',this)" style="border-color:var(--laco)">LACO</button>
+    <button class="fbtn" onclick="setLocalRotar('LADI',this)" style="border-color:var(--ladi)">LADI</button>
+    <button class="fbtn" onclick="setLocalRotar('LAJO',this)" style="border-color:var(--lajo)">LAJO</button>
+  </div>
   <div class="g21">
     <div class="card">
       <div class="card-title">Capital inmovilizado por familia <span class="tag">≤ 2 uds. vendidas en 90d</span></div>
@@ -342,6 +362,37 @@ function makeChart(id,cfg){destroyChart(id);charts[id]=new Chart(document.getEle
 let gran = 'mes';
 let periods = 12;
 let marcaActual = 'Lacoste';
+let localReorder = 'TODOS';
+let localRotar = 'TODOS';
+
+// Plugin: thin reference line at 6 months labeled "objetivo"
+const objetivoPlugin = {
+  id:'objetivo',
+  afterDraw(chart){
+    const {ctx,scales,chartArea:{left,right,top,bottom}}=chart;
+    const isHoriz = chart.options.indexAxis==='y';
+    if(isHoriz){
+      const x=scales.x;
+      if(!x||x.max<6) return;
+      const xPx=x.getPixelForValue(6);
+      ctx.save();
+      ctx.beginPath();ctx.moveTo(xPx,top);ctx.lineTo(xPx,bottom);
+      ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='rgba(255,255,255,0.45)';ctx.font='9px IBM Plex Mono,monospace';
+      ctx.fillText('objetivo',xPx+3,top-2);ctx.restore();
+    } else {
+      const y=scales.y;const x=scales.x;
+      if(!y||y.max<6) return;
+      const yPx=y.getPixelForValue(6);
+      ctx.save();
+      ctx.beginPath();ctx.moveTo(left,yPx);ctx.lineTo(right,yPx);
+      ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='rgba(255,255,255,0.45)';ctx.font='9px IBM Plex Mono,monospace';
+      ctx.fillText('objetivo',right+4,yPx+3);ctx.restore();
+    }
+  }
+};
+Chart.register(objetivoPlugin);
 
 function setGran(g,btn){
   gran=g;
@@ -465,8 +516,7 @@ function buildOverview(){
       borderWidth:1,borderRadius:3}]
   },options:{...CD,plugins:{...CD.plugins,legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.toFixed(1)} meses`}}},scales:{
     x:{...CD.scales.x},y:{...CD.scales.y,title:{display:true,text:'Meses',color:'#637082',font:{size:9}}}
-  }}});
-}
+  }}});}
 
 // ===================== LOCALES =====================
 function buildLocales(){
@@ -609,9 +659,24 @@ function setMarca(m,btn){
   buildReorder();
 }
 
+function setLocalReorder(l,btn){
+  localReorder=l;
+  document.querySelectorAll('#local-tabs-reorder .fbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildReorder();
+}
+
+function setLocalRotar(l,btn){
+  localRotar=l;
+  document.querySelectorAll('#local-tabs-rotar .fbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildRotar();
+}
+
 function buildReorder(){
-  const data=D.top30[marcaActual]||[];
-  document.getElementById('reorder-title').innerHTML=`Top ${data.length} a reordenar · ${marcaActual} <span class="tag">stock &lt; 3 meses · ref. ventas año anterior</span>`;
+  let data=D.top30[marcaActual]||[];
+  if(localReorder!=='TODOS') data=data.filter(r=>r.local===localReorder);
+  document.getElementById('reorder-title').innerHTML=`Top ${data.length} a reordenar · ${marcaActual}${localReorder!=='TODOS'?' · '+localReorder:''} <span class="tag">stock &lt; 3 meses · ref. ventas año anterior</span>`;
   const tb=document.getElementById('tb-reorder');
   tb.innerHTML='';
   if(data.length===0){tb.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:20px">Sin artículos con stock &lt; 3 meses y ventas de referencia suficientes.</td></tr>';return}
@@ -690,9 +755,11 @@ function buildRotar(){
     </div>`;
   });
 
+  const filtered = localRotar==='TODOS' ? ROTAR_DATA : ROTAR_DATA.filter(r=>r.local===localRotar);
   const tb=document.getElementById('tb-rotar');
   tb.innerHTML='';
-  ROTAR_DATA.forEach((r,i)=>{
+  if(filtered.length===0){tb.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Sin artículos para este local.</td></tr>';return}
+  filtered.forEach((r,i)=>{
     const ac=ACCIONES[r.familia]||ACCIONES.default;
     tb.innerHTML+=`<tr>
       <td class="dim">${i+1}</td>
