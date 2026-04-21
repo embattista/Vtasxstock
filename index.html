@@ -67,7 +67,10 @@
 
   /* TABLE */
   .tbl{width:100%;border-collapse:collapse;font-size:11.5px}
-  .tbl th{text-align:left;padding:6px 9px;color:var(--muted);font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+  .tbl th{text-align:left;padding:6px 9px;color:var(--muted);font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap}
+  .tbl th:hover{color:var(--text)}
+  .tbl th.sort-asc::after{content:' ↑';color:var(--accent)}
+  .tbl th.sort-desc::after{content:' ↓';color:var(--accent)}
   .tbl td{padding:6px 9px;border-bottom:1px solid rgba(30,45,61,.6);vertical-align:middle}
   .tbl tr:last-child td{border-bottom:none}
   .tbl tr:hover td{background:rgba(255,255,255,.015)}
@@ -721,6 +724,7 @@ function buildLocales(){
       <td class="mono dim">${velMes>0?fmtN(velMes)+'/mes':'—'}</td>
     </tr>`;
   });
+  makeSortable('tb-locales');
 }
 
 // ===================== FAMILIAS =====================
@@ -825,6 +829,7 @@ function buildFamilias(){
       <td>${estado}</td>
     </tr>`;
   });
+  makeSortable('tb-familias');
 }
 
 // ===================== HEATMAP =====================
@@ -913,6 +918,7 @@ function buildReorder(){
       <td>${urgPill(ms)}</td>
     </tr>`;
   });
+  makeSortable('tb-reorder');
 }
 
 // ===================== ROTAR =====================
@@ -1007,6 +1013,7 @@ function buildRotar(){
       <td class="dim">${ac}</td>
     </tr>`;
   });
+  makeSortable('tb-rotar');
 }
 
 // ===================== OPORTUNIDADES =====================
@@ -1054,6 +1061,82 @@ function buildOportunidades(){
   }}});
 }
 
+// ===================== UNIVERSAL TABLE SORT =====================
+// Call after any table tbody is rendered to make all .tbl headers sortable.
+// Parses cell text, auto-detects numbers/currency/percent for correct ordering.
+
+const _sortState = {}; // tbodyId → {col, dir}
+
+function makeSortable(tbodyId) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  const table = tbody.closest('table');
+  const ths   = table.querySelectorAll('thead th');
+
+  ths.forEach((th, ci) => {
+    // Clone to remove old listeners
+    const newTh = th.cloneNode(true);
+    th.parentNode.replaceChild(newTh, th);
+    newTh.style.cursor = 'pointer';
+    newTh.title = 'Clic para ordenar';
+    newTh.addEventListener('click', () => {
+      const st  = _sortState[tbodyId] || {col:-1, dir:1};
+      const dir = (st.col === ci) ? -st.dir : -1; // first click = desc
+      _sortState[tbodyId] = {col: ci, dir};
+
+      // Update header indicators
+      table.querySelectorAll('thead th').forEach(h => {
+        h.classList.remove('sort-asc','sort-desc');
+      });
+      table.querySelectorAll('thead th')[ci]
+        .classList.add(dir === -1 ? 'sort-desc' : 'sort-asc');
+
+      // Sort rows
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const aCell = a.cells[ci];
+        const bCell = b.cells[ci];
+        if (!aCell || !bCell) return 0;
+        const aVal = parseSort(aCell.innerText || aCell.textContent || '');
+        const bVal = parseSort(bCell.innerText || bCell.textContent || '');
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+          return (aVal - bVal) * dir;
+        }
+        return String(aVal).localeCompare(String(bVal), 'es') * dir;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+
+      // Re-stripe row numbers if first col is "#"
+      const firstTh = table.querySelector('thead th');
+      if (firstTh && firstTh.textContent.trim() === '#') {
+        rows.forEach((r, i) => {
+          if (r.cells[0]) r.cells[0].textContent = i + 1;
+        });
+      }
+    });
+  });
+}
+
+function parseSort(raw) {
+  const s = raw.replace(/\s+/g,'').replace(/\./g,'');
+  // Currency like $1.2M $450K $3.5B
+  const money = s.match(/^\$?([0-9,]+(?:\.[0-9]+)?)(B|M|K)?m?$/i);
+  if (money) {
+    let n = parseFloat(money[1].replace(/,/g,''));
+    const mul = {B:1e9,M:1e6,K:1e3}[money[2]?.toUpperCase()] || 1;
+    return n * mul;
+  }
+  // Meses like 2.5m or >999m or SIN STOCK
+  const meses = s.match(/^>?([0-9]+(?:\.[0-9]+)?)m/i);
+  if (meses) return parseFloat(meses[1]);
+  if (s === 'SINSTOCK' || s === '0m—SINSTOCK') return 0;
+  // Plain number
+  const plain = parseFloat(s.replace(/,/g,'.'));
+  if (!isNaN(plain)) return plain;
+  // Strip emoji / pill text for string compare
+  return raw.replace(/[🔴🟢🟡🟠🟣📦🔄]/g,'').trim().toLowerCase();
+}
+
 // ===================== NAVIGATION =====================
 function goTab(id,btn){
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
@@ -1071,6 +1154,64 @@ const PLAN_PAGE_SIZE = 50;
 let planFilters = {marca:'Todas', local:'Todos', accion:'Todas'};
 let planPage = 0;
 let planFiltered = [];
+let planSort = {col: -1, dir: -1};  // sort state for plan table
+
+// Plan column sort keys (maps col index → field in PLAN_DATA)
+const PLAN_SORT_KEYS = [
+  null,           // 0 #
+  'marca',        // 1 Marca
+  'local',        // 2 Local
+  'accion',       // 3 Acción
+  'urgencia',     // 4 Urgencia
+  'articulo',     // 5 Artículo
+  'desc',         // 6 Descripción
+  'familia',      // 7 Familia
+  'temporada',    // 8 Temp
+  'stock',        // 9 Stock
+  'vel_mes',      // 10 Vel./mes
+  'meses_num',    // 11 Meses stk
+  'uds_4m',       // 12 Uds. 4m ref
+  'ing_ref',      // 13 Ingreso ref
+  'val_inmov',    // 14 Val. inmov
+];
+
+// Urgencia sort order
+const URG_ORDER = {INMEDIATA:0, URGENTE:1, ALTA:1, PLANIFICAR:2, MEDIA:3, VERIFICAR:4, '':9};
+// Accion sort order
+const ACCION_ORDER = {TRANSFERENCIA:0, REORDER:1, REPONER:2, 'REVISAR PRECIO':3, LIQUIDAR:4};
+
+function sortPlanFiltered(ci, dir) {
+  const key = PLAN_SORT_KEYS[ci];
+  if (!key) return;
+  planFiltered.sort((a, b) => {
+    let av = a[key], bv = b[key];
+    if (key === 'urgencia') { av = URG_ORDER[av]??9; bv = URG_ORDER[bv]??9; }
+    else if (key === 'accion') { av = ACCION_ORDER[av]??9; bv = ACCION_ORDER[bv]??9; }
+    else if (typeof av === 'number' && typeof bv === 'number') { return (av - bv) * dir; }
+    else { av = String(av??'').toLowerCase(); bv = String(bv??'').toLowerCase(); }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+}
+
+function initPlanSort() {
+  const table = document.getElementById('tbl-plan');
+  if (!table) return;
+  const ths = table.querySelectorAll('thead th');
+  ths.forEach((th, ci) => {
+    if (!PLAN_SORT_KEYS[ci]) { th.style.cursor = 'default'; return; }
+    th.style.cursor = 'pointer';
+    th.title = 'Clic para ordenar';
+    th.addEventListener('click', () => {
+      const dir = planSort.col === ci ? -planSort.dir : -1;
+      planSort = {col: ci, dir};
+      ths.forEach(h => h.classList.remove('sort-asc','sort-desc'));
+      th.classList.add(dir === -1 ? 'sort-desc' : 'sort-asc');
+      planPage = 0;
+      sortPlanFiltered(ci, dir);
+      renderPlanRows();
+    });
+  });
+}
 
 const ACCION_META = {
   'REORDER':       {pill:'p-b', icon:'📦'},
@@ -1099,6 +1240,7 @@ function setPlanFilter(type, val, btn){
 
 function buildPlan(){
   renderPlan();
+  initPlanSort();
 }
 
 function renderPlan(){
@@ -1109,9 +1251,13 @@ function renderPlan(){
     if(accion!=='Todas' && r.accion!==accion) return false;
     return true;
   });
-
+  // Re-apply current sort if active
+  if(planSort.col >= 0) sortPlanFiltered(planSort.col, planSort.dir);
   document.getElementById('plan-count').textContent = planFiltered.length.toLocaleString('es-AR');
+  renderPlanRows();
+}
 
+function renderPlanRows(){
   const start = planPage * PLAN_PAGE_SIZE;
   const pageData = planFiltered.slice(start, start + PLAN_PAGE_SIZE);
   const tb = document.getElementById('tbody-plan');
