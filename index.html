@@ -227,6 +227,23 @@
 
 <!-- ===================== FAMILIAS ===================== -->
 <section class="section" id="sec-familias">
+  <div class="filter-row" id="fam-marca-tabs">
+    <span class="time-label" style="align-self:center">Marca:</span>
+    <button class="fbtn active" onclick="setFamFilter('marca','Todas',this)">Todas</button>
+    <button class="fbtn" onclick="setFamFilter('marca','Lacoste',this)" style="border-color:#58a6ff">🐊 Lacoste</button>
+    <button class="fbtn" onclick="setFamFilter('marca','Akiabara',this)" style="border-color:#bc8cff">👧 Akiabara</button>
+    <button class="fbtn" onclick="setFamFilter('marca','Burgues',this)" style="border-color:#f85149">🧥 Burgues</button>
+  </div>
+  <div class="filter-row" id="fam-local-tabs">
+    <span class="time-label" style="align-self:center">Local:</span>
+    <button class="fbtn active" onclick="setFamFilter('local','Todos',this)">Todos</button>
+    <button class="fbtn" onclick="setFamFilter('local','AKRI',this)" style="border-color:var(--akri)">AKRI</button>
+    <button class="fbtn" onclick="setFamFilter('local','BUCO',this)" style="border-color:var(--buco)">BUCO</button>
+    <button class="fbtn" onclick="setFamFilter('local','LAAL',this)" style="border-color:var(--laal)">LAAL</button>
+    <button class="fbtn" onclick="setFamFilter('local','LACO',this)" style="border-color:var(--laco)">LACO</button>
+    <button class="fbtn" onclick="setFamFilter('local','LADI',this)" style="border-color:var(--ladi)">LADI</button>
+    <button class="fbtn" onclick="setFamFilter('local','LAJO',this)" style="border-color:var(--lajo)">LAJO</button>
+  </div>
   <div class="g2">
     <div class="card">
       <div class="card-title">Ingresos por familia <span class="tag" id="tag-fam2">—</span></div>
@@ -707,26 +724,82 @@ function buildLocales(){
 }
 
 // ===================== FAMILIAS =====================
+// Marca→locales map
+const MARCA_LOCALES = {Lacoste:['LAAL','LACO','LADI','LAJO'], Akiabara:['AKRI'], Burgues:['BUCO']};
+
+let famFilters = {marca:'Todas', local:'Todos'};
+
+function setFamFilter(type, val, btn){
+  famFilters[type] = val;
+  // If marca selected, reset local to Todos (marca already implies locales)
+  if(type==='marca' && val!=='Todas'){
+    famFilters.local = 'Todos';
+    document.querySelectorAll('#fam-local-tabs .fbtn').forEach((b,i)=>{b.classList.toggle('active',i===0)});
+  }
+  // If local selected, reset marca to Todas
+  if(type==='local' && val!=='Todos'){
+    famFilters.marca = 'Todas';
+    document.querySelectorAll('#fam-marca-tabs .fbtn').forEach((b,i)=>{b.classList.toggle('active',i===0)});
+  }
+  document.querySelectorAll(`#fam-${type}-tabs .fbtn`).forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildFamilias();
+}
+
+function getFamLocales(){
+  if(famFilters.local!=='Todos') return [famFilters.local];
+  if(famFilters.marca!=='Todas') return MARCA_LOCALES[famFilters.marca]||D.locales;
+  return D.locales;
+}
+
 function buildFamilias(){
   const {slice,byPeriod}=getTimeSeries();
   const tag=gran==='mes'?`${periods} meses`:gran==='semana'?`${periods} sem`:`${periods} días`;
-  document.getElementById('tag-fam2').textContent=tag;
+  document.getElementById('tag-fam2').textContent=tag+(famFilters.local!=='Todos'?' · '+famFilters.local:famFilters.marca!=='Todas'?' · '+famFilters.marca:'');
 
-  const sf=D.stock_familia.slice(0,14);
+  const activeLocs = getFamLocales();
+
+  // Aggregate familia data from meses_stock_lf filtered by active locales
+  const famStk={}, famVal={}, famUdsMes={}, famIngRef={}, famUdsRef={};
+  D.meses_stock_lf.filter(x=>activeLocs.includes(x.Local)).forEach(x=>{
+    famStk[x.Familia]    = (famStk[x.Familia]||0)   + (x.stock||0);
+    famVal[x.Familia]    = (famVal[x.Familia]||0)    + (x.valorizado||0);
+    famUdsMes[x.Familia] = (famUdsMes[x.Familia]||0) + (x.uds_mes||0);
+  });
+  D.ventas_ref_lf.filter(x=>activeLocs.includes(x.Local)).forEach(x=>{
+    famIngRef[x.Familia] = (famIngRef[x.Familia]||0) + (x.ing_ref||0);
+    famUdsRef[x.Familia] = (famUdsRef[x.Familia]||0) + (x.uds_ref||0);
+  });
+
+  // Build sorted familia list, skip OTR
+  const fams = [...new Set([
+    ...Object.keys(famVal),
+    ...Object.keys(famIngRef)
+  ])].filter(f=>f!=='OTR'&&f!=='undefined'&&f).map(f=>({
+    Familia:   f,
+    stock:     famStk[f]||0,
+    valorizado:famVal[f]||0,
+    uds_mes:   famUdsMes[f]||0,
+    ing_ref:   famIngRef[f]||0,
+    uds_ref:   famUdsRef[f]||0,
+    meses_stock: famUdsMes[f]>0 ? Math.min((famStk[f]||0)/famUdsMes[f], 99) : 99,
+  })).sort((a,b)=>b.valorizado-a.valorizado).slice(0,16);
+
+  // Chart: stock valorizado por familia
   makeChart('ch-fam2',{type:'bar',data:{
-    labels:sf.map(x=>x.Familia),
-    datasets:[{label:'Stock ($)',data:sf.map(x=>x.valorizado),backgroundColor:'rgba(88,166,255,.5)',borderColor:'#58a6ff',borderWidth:1,borderRadius:3}]
+    labels:fams.map(x=>x.Familia),
+    datasets:[{label:'Stock ($)',data:fams.map(x=>x.valorizado),
+      backgroundColor:'rgba(88,166,255,.5)',borderColor:'#58a6ff',borderWidth:1,borderRadius:3}]
   },options:{indexAxis:'y',...CD,plugins:{...CD.plugins,legend:{display:false}},scales:{
     x:{...CD.scales.x,ticks:{callback:v=>fmt(v),font:{size:8}}},y:{...CD.scales.y,ticks:{font:{size:9}}}
   }}});
 
-  // Meses stock por familia
-  const sfms=D.stock_familia.slice(0,14);
+  // Chart: meses de stock por familia
   makeChart('ch-meses-fam',{type:'bar',data:{
-    labels:sfms.map(x=>x.Familia),
-    datasets:[{label:'Meses de stock',data:sfms.map(x=>Math.min(x.meses_stock||0,24)),
-      backgroundColor:sfms.map(x=>{const m=x.meses_stock||0;return m>12?'rgba(248,81,73,.65)':m>5?'rgba(227,179,65,.65)':'rgba(63,185,80,.65)'}),
-      borderColor:sfms.map(x=>{const m=x.meses_stock||0;return m>12?'#f85149':m>5?'#e3b341':'#3fb950'}),
+    labels:fams.map(x=>x.Familia),
+    datasets:[{label:'Meses de stock',data:fams.map(x=>Math.min(x.meses_stock,24)),
+      backgroundColor:fams.map(x=>{const m=x.meses_stock;return m>12?'rgba(248,81,73,.65)':m>5?'rgba(227,179,65,.65)':'rgba(63,185,80,.65)'}),
+      borderColor:fams.map(x=>{const m=x.meses_stock;return m>12?'#f85149':m>5?'#e3b341':'#3fb950'}),
       borderWidth:1,borderRadius:3}]
   },options:{indexAxis:'y',...CD,plugins:{...CD.plugins,legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.toFixed(1)} meses`}}},scales:{
     x:{...CD.scales.x,title:{display:true,text:'Meses de cobertura',color:'#637082',font:{size:9}},max:24},
@@ -736,10 +809,9 @@ function buildFamilias(){
   // Table
   const tb=document.getElementById('tb-familias');
   tb.innerHTML='';
-  D.stock_familia.forEach(sf=>{
-    const ms=sf.meses_stock||0;
-    const velMes=sf.uds_mes||0;
-    const precProm=velMes>0&&sf.ing_ref>0?fmt(sf.ing_ref/sf.uds_ref):'—';
+  fams.forEach(sf=>{
+    const ms=sf.meses_stock;
+    const precProm=sf.uds_ref>0&&sf.ing_ref>0?fmt(sf.ing_ref/sf.uds_ref):'—';
     const estado=ms>12?'<span class="pill p-r">Sobre stock</span>':ms>5?'<span class="pill p-y">Alto</span>':'<span class="pill p-g">OK</span>';
     tb.innerHTML+=`<tr>
       <td><b>${sf.Familia}</b></td>
@@ -748,7 +820,7 @@ function buildFamilias(){
       <td class="mono">${precProm}</td>
       <td class="mono">${fmtN(sf.stock)}</td>
       <td class="mono">${fmt(sf.valorizado)}</td>
-      <td class="mono dim">${velMes>0?fmtN(velMes)+'/mes':'—'}</td>
+      <td class="mono dim">${sf.uds_mes>0?fmtN(sf.uds_mes)+'/mes':'—'}</td>
       <td class="mono">${msPill(ms)}</td>
       <td>${estado}</td>
     </tr>`;
