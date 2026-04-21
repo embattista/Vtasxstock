@@ -148,12 +148,25 @@
     <button class="seg-btn" onclick="setGran('semana',this)">Semana</button>
     <button class="seg-btn" onclick="setGran('dia',this)">Día</button>
   </div>
+
+  <!-- Mode toggle -->
+  <div class="seg-ctrl" id="mode-ctrl">
+    <button class="seg-btn active" onclick="setMode('range',this)">Últimos N</button>
+    <button class="seg-btn" onclick="setMode('specific',this)">Período específico</button>
+  </div>
+
+  <!-- Range mode -->
   <select class="period-select" id="periodSelect" onchange="renderCharts()">
     <option value="12">Últimos 12 meses</option>
     <option value="6">Últimos 6 meses</option>
     <option value="3">Últimos 3 meses</option>
     <option value="24">Todos (24 meses)</option>
   </select>
+
+  <!-- Specific mode (hidden by default) -->
+  <select class="period-select" id="specificSelect" style="display:none" onchange="renderCharts()">
+  </select>
+
   <span class="ref-badge" id="refBadge">📅 Meses de stock: ref. abr–jul 2025 (LADI = proxy LAJO)</span>
 </div>
 
@@ -364,6 +377,53 @@ let periods = 12;
 let marcaActual = 'Lacoste';
 let localReorder = 'TODOS';
 let localRotar = 'TODOS';
+let viewMode = 'range';       // 'range' | 'specific'
+let specificPeriod = null;    // e.g. '2026-03' or '2025-W18'
+
+function setMode(m,btn){
+  viewMode=m;
+  document.querySelectorAll('#mode-ctrl .seg-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(m==='specific'){
+    document.getElementById('periodSelect').style.display='none';
+    document.getElementById('specificSelect').style.display='';
+    populateSpecificSelect();
+  } else {
+    document.getElementById('periodSelect').style.display='';
+    document.getElementById('specificSelect').style.display='none';
+  }
+  renderCharts();
+}
+
+function populateSpecificSelect(){
+  const raw = gran==='dia'?D.ventas_dia:gran==='semana'?D.ventas_semana:D.ventas_mes;
+  const key = gran==='dia'?'dia':gran==='semana'?'semana':'mes';
+  const all=[...new Set(raw.map(x=>x[key]))].sort().reverse();
+  const sel=document.getElementById('specificSelect');
+  sel.innerHTML='';
+  all.forEach(p=>{
+    const el=document.createElement('option');
+    el.value=p;
+    el.textContent=fmtPeriodLabel(p);
+    sel.appendChild(el);
+  });
+  if(!specificPeriod||!all.includes(specificPeriod)) specificPeriod=all[0];
+  sel.value=specificPeriod;
+}
+
+function fmtPeriodLabel(p){
+  if(gran==='mes'){
+    const [y,m]=p.split('-');
+    const names=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    return `${names[parseInt(m)-1]} ${y}`;
+  }
+  if(gran==='semana'){
+    const d=new Date(p);
+    const wn=Math.ceil((d-new Date(d.getFullYear(),0,1))/604800000);
+    return `Sem ${wn} · ${p.slice(0,4)}`;
+  }
+  return p; // dia: yyyy-mm-dd
+}
 
 // Plugin: thin reference line at 6 months labeled "objetivo"
 const objetivoPlugin = {
@@ -398,7 +458,8 @@ function setGran(g,btn){
   gran=g;
   document.querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  // update period options
+  // restore correct mode button
+  document.querySelectorAll('#mode-ctrl .seg-btn').forEach((b,i)=>{if((i===0&&viewMode==='range')||(i===1&&viewMode==='specific'))b.classList.add('active')});
   const sel=document.getElementById('periodSelect');
   sel.innerHTML='';
   const opts = gran==='dia'
@@ -407,11 +468,15 @@ function setGran(g,btn){
     ? [{v:12,l:'Últimas 12 semanas'},{v:26,l:'Últimas 26 semanas'},{v:52,l:'Últimas 52 semanas'},{v:8,l:'Últimas 8 semanas'}]
     : [{v:12,l:'Últimos 12 meses'},{v:6,l:'Últimos 6 meses'},{v:3,l:'Últimos 3 meses'},{v:24,l:'Todos (24 meses)'}];
   opts.forEach(o=>{const el=document.createElement('option');el.value=o.v;el.textContent=o.l;sel.appendChild(el)});
+  if(viewMode==='specific') populateSpecificSelect();
   renderCharts();
 }
 
 function renderCharts(){
   periods=parseInt(document.getElementById('periodSelect').value);
+  if(viewMode==='specific'){
+    specificPeriod=document.getElementById('specificSelect').value;
+  }
   buildOverview();
   if(document.getElementById('sec-locales').classList.contains('active')) buildLocales();
   if(document.getElementById('sec-familias').classList.contains('active')) buildFamilias();
@@ -423,7 +488,12 @@ function getTimeSeries(){
   const raw = gran==='dia'?D.ventas_dia:gran==='semana'?D.ventas_semana:D.ventas_mes;
   const key = gran==='dia'?'dia':gran==='semana'?'semana':'mes';
   const allPeriods=[...new Set(raw.map(x=>x[key]))].sort();
-  const slice = allPeriods.slice(-periods);
+  let slice;
+  if(viewMode==='specific' && specificPeriod){
+    slice=[specificPeriod];
+  } else {
+    slice=allPeriods.slice(-periods);
+  }
   const byPeriod={};
   D.locales.forEach(loc=>{byPeriod[loc]={}});
   raw.forEach(r=>{if(slice.includes(r[key]))byPeriod[r.Local][r[key]]=(byPeriod[r.Local][r[key]]||0)+r.ing});
@@ -733,9 +803,24 @@ const CAP_INM=[
 const ACCIONES={CUEROS:'Liquidación / outlet',SACOS:'Precio especial + traslado a otra sucursal',POLOS:'Promo kit con remera / precio escalonado',SWEATERS:'Esperar entrada invierno — monitorear semanal',ZAPATILLAS:'Reducir precio + mejor exposición vidriera',BUZOS:'Liquidar fin de temporada con descuento',default:'Revisar precio / acceso visual / traslado'};
 
 function buildRotar(){
+  // Compute capital inmovilizado dynamically from meses_stock_lf filtered by local
+  // Low rotation = uds_mes <= 0.67 (≈ ≤2 uds/90d)
+  const lf = localRotar==='TODOS'
+    ? D.meses_stock_lf
+    : D.meses_stock_lf.filter(x=>x.Local===localRotar);
+
+  // Aggregate by familia, low-rotation items only (uds_mes ≤ 0.67), skip OTR
+  const famMap={};
+  lf.filter(x=>x.uds_mes<=0.67 && x.Familia!=='OTR' && x.valorizado>0).forEach(x=>{
+    if(!famMap[x.Familia]) famMap[x.Familia]={Familia:x.Familia,stock:0,valorizado:0};
+    famMap[x.Familia].stock+=x.stock;
+    famMap[x.Familia].valorizado+=x.valorizado;
+  });
+  const capDyn=Object.values(famMap).sort((a,b)=>b.valorizado-a.valorizado).slice(0,10);
+
   makeChart('ch-cap-inmov',{type:'bar',data:{
-    labels:CAP_INM.map(x=>x.Familia),
-    datasets:[{label:'Capital inmovilizado ($)',data:CAP_INM.map(x=>x.valorizado),
+    labels:capDyn.map(x=>x.Familia),
+    datasets:[{label:'Capital inmovilizado ($)',data:capDyn.map(x=>x.valorizado),
       backgroundColor:'rgba(248,81,73,.6)',borderColor:'#f85149',borderWidth:1,borderRadius:3}]
   },options:{indexAxis:'y',...CD,plugins:{...CD.plugins,legend:{display:false}},scales:{
     x:{...CD.scales.x,ticks:{callback:v=>fmt(v),font:{size:8}}},y:{...CD.scales.y,ticks:{font:{size:9}}}
@@ -743,8 +828,10 @@ function buildRotar(){
 
   const capList=document.getElementById('cap-list');
   capList.innerHTML='<div class="card-title">Top familias</div>';
-  CAP_INM.slice(0,6).forEach((f,i)=>{
-    const pct=Math.round(f.valorizado/CAP_INM[0].valorizado*100);
+  const capShow=capDyn.slice(0,6);
+  const capMax=capShow[0]?.valorizado||1;
+  capShow.forEach((f,i)=>{
+    const pct=Math.round(f.valorizado/capMax*100);
     capList.innerHTML+=`<div style="padding:7px 0;border-bottom:1px solid rgba(30,45,61,.6)">
       <div style="display:flex;justify-content:space-between;margin-bottom:3px">
         <span style="font-size:11.5px;font-weight:600">${i+1}. ${f.Familia}</span>
