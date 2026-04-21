@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LIV · Dashboard Operativo v2</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
   :root {
@@ -1104,21 +1105,115 @@ function downloadPlanXLS(){
     if(accion!=='Todas' && r.accion!==accion) return false;
     return true;
   });
-  const SEP = String.fromCharCode(9);
-  const NL  = String.fromCharCode(10);
-  const headers = ['Marca','Local','Acción','Urgencia','Articulo','Descripcion','Familia','Temporada','Stock actual','Vel./mes (ref)','Meses stock','Uds. ref (4m)','Ingreso ref ($)','Valor inmov. ($)'];
-  const rows = filtered.map(r=>[r.marca,r.local,r.accion,r.urgencia||'',r.articulo,r.desc||'',r.familia,r.temporada||'',r.stock!==''?r.stock:'',r.vel_mes!==''?r.vel_mes:'',r.meses_stock,r.uds_4m!==''?r.uds_4m:'',r.ing_ref||'',r.val_inmov||'']);
-  const tsv=[headers,...rows].map(row=>row.map(c=>String(c??'')).join(SEP)).join(NL);
-  const blob=new Blob(['﻿'+tsv],{type:'text/tab-separated-values;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;
-  const ml=marca==='Todas'?'TodasMarcas':marca;
-  const ll=local==='Todos'?'':('_'+local);
-  const al=accion==='Todas'?'':('_'+accion.replace(/ /g,'_'));
-  a.download='Plan_Accion_LIV_'+ml+ll+al+'.xls';
-  a.click();
-  URL.revokeObjectURL(url);
+
+  // ---- Build workbook with SheetJS ----
+  const wb = XLSX.utils.book_new();
+
+  // Group by marca for separate sheets
+  const marcas = marca!=='Todas' ? [marca] : ['Lacoste','Akiabara','Burgues'];
+  const MARCA_ICON = {Lacoste:'Lacoste', Akiabara:'Akiabara', Burgues:'Burgues'};
+
+  marcas.forEach(m => {
+    const rows = filtered.filter(r => r.marca===m);
+    if(!rows.length) return;
+
+    const headers = ['Marca','Local','Acción','Urgencia','Artículo','Descripción','Familia',
+                     'Temporada','Stock actual','Vel./mes (ref)','Meses stock',
+                     'Uds. ref (4m)','Ingreso ref ($)','Valor inmov. ($)'];
+
+    const data = [headers, ...rows.map(r=>[
+      r.marca, r.local, r.accion, r.urgencia||'', r.articulo, r.desc||'',
+      r.familia, r.temporada||'',
+      r.stock!==''&&r.stock!==null ? Number(r.stock) : '',
+      r.vel_mes!==''&&r.vel_mes!==null ? r.vel_mes : '',
+      r.meses_stock,
+      r.uds_4m!==''&&r.uds_4m!==null ? Number(r.uds_4m) : '',
+      r.ing_ref   ? Number(r.ing_ref)   : '',
+      r.val_inmov ? Number(r.val_inmov) : ''
+    ])];
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // Column widths
+    ws['!cols'] = [
+      {wch:12},{wch:7},{wch:14},{wch:12},{wch:14},{wch:32},{wch:14},
+      {wch:9},{wch:10},{wch:12},{wch:12},{wch:11},{wch:14},{wch:14}
+    ];
+
+    // Style header row (row 0)
+    const ACCENT_COLORS = {
+      Lacoste: {fgColor:{rgb:'1A4F8A'}},
+      Akiabara:{fgColor:{rgb:'5A1A8A'}},
+      Burgues: {fgColor:{rgb:'8A1A0E'}}
+    };
+    const hdrFill = ACCENT_COLORS[m] || {fgColor:{rgb:'1A1A2E'}};
+    const hdrFont = {bold:true, color:{rgb:'FFFFFF'}, name:'Arial', sz:10};
+    const centerAlign = {horizontal:'center', vertical:'center', wrapText:true};
+    const leftAlign   = {horizontal:'left',   vertical:'center'};
+
+    headers.forEach((_,ci) => {
+      const addr = XLSX.utils.encode_cell({r:0, c:ci});
+      if(!ws[addr]) return;
+      ws[addr].s = {fill:hdrFill, font:hdrFont, alignment:centerAlign,
+                    border:{bottom:{style:'thin',color:{rgb:'FFFFFF'}}}};
+    });
+
+    // Style data rows
+    const ACCION_FILLS = {
+      'REORDER':       {fgColor:{rgb:'E8F4FF'}},
+      'REPONER':       {fgColor:{rgb:'E8F5E8'}},
+      'LIQUIDAR':      {fgColor:{rgb:'FFE8E8'}},
+      'REVISAR PRECIO':{fgColor:{rgb:'FFF3E0'}},
+      'TRANSFERENCIA': {fgColor:{rgb:'F3E8FF'}},
+    };
+    const URG_COLORS = {
+      'URGENTE':   'CC0000',
+      'ALTA':      'CC0000',
+      'INMEDIATA': 'CC0000',
+      'PLANIFICAR':'E65100',
+      'MEDIA':     'E65100',
+      'VERIFICAR': '1565C0',
+    };
+
+    rows.forEach((r, ri) => {
+      const rowIdx = ri + 1; // +1 for header
+      const fill = ACCION_FILLS[r.accion] || {fgColor:{rgb:'FFFFFF'}};
+      const altFill = {fgColor:{rgb: ri%2===0 ? 'F8F9FA' : 'FFFFFF'}};
+      const rowFill = ACCION_FILLS[r.accion] ? fill : altFill;
+
+      headers.forEach((_,ci) => {
+        const addr = XLSX.utils.encode_cell({r:rowIdx, c:ci});
+        if(!ws[addr]) ws[addr] = {t:'z', v:''};
+        const baseStyle = {fill:rowFill, font:{name:'Arial',sz:9}, alignment:leftAlign};
+
+        // Urgencia column (col 3) — colored text
+        if(ci===3 && r.urgencia && URG_COLORS[r.urgencia]){
+          baseStyle.font = {...baseStyle.font, bold:true, color:{rgb:URG_COLORS[r.urgencia]}};
+        }
+        // Money columns — right align + number format
+        if(ci===12 || ci===13){
+          baseStyle.alignment = {horizontal:'right', vertical:'center'};
+          if(ws[addr].t==='n') ws[addr].z = '#,##0';
+        }
+        // Stock / uds cols — right align
+        if(ci===8 || ci===11){
+          baseStyle.alignment = {horizontal:'right', vertical:'center'};
+        }
+        ws[addr].s = baseStyle;
+      });
+    });
+
+    // Freeze header row
+    ws['!freeze'] = {xSplit:0, ySplit:1, topLeftCell:'A2', activePane:'bottomLeft'};
+
+    XLSX.utils.book_append_sheet(wb, ws, m);
+  });
+
+  // Download
+  const ml  = marca==='Todas'?'TodasMarcas':marca;
+  const ll  = local==='Todos'?'':('_'+local);
+  const al  = accion==='Todas'?'':('_'+accion.replace(/ /g,'_'));
+  XLSX.writeFile(wb, 'Plan_Accion_LIV_'+ml+ll+al+'.xlsx');
 }
 
 
